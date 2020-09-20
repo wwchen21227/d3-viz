@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+
+<head>
+  <meta charset="utf-8">
+  <style>
+    html,
+    body {
+      margin: 0;
+      height: 100%;
+      width: 100%;
+      background-color: #000;
+    }
+
+    #map,
+    #firework,
+    #nodes {
+      position: absolute;
+      left: 0;
+      top: 0;
+    }
+
+    #map {
+      z-index: 1;
+    }
+
+    #nodes {
+      z-index: 2;
+    }
+
+    #firework {
+      z-index: 3;
+    }
+  </style>
+</head>
+
+<body>
+
+  <canvas id="map" width="1280" height="600"></canvas>
+  <canvas id="nodes" width="1280" height="600"></canvas>
+  <canvas id="firework" width="1280" height="600"></canvas>
+
+  <script src="https://d3js.org/d3.v4.js" charset="utf-8"></script>
+  <script src="https://unpkg.com/topojson-client@3"></script>
+  <script>
+    window.requestAnimFrame = (function () {
+      return window.requestAnimationFrame ||
+        window.webkitRequestAnimationFrame ||
+        window.mozRequestAnimationFrame ||
+        function (callback) {
+          window.setTimeout(callback, 1000 / 60);
+        };
+    })();
+    // get a random number within a range
+    function random(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+    let canvasFire = document.getElementById('firework'),
+      ctxFire = canvasFire.getContext('2d'),
+      limiterTotal = 5,
+      limiterTick = 0,
+      // firework collection
+      fireworks = [],
+      // particle collection
+      particles = [],
+      // starting hue
+      hue = 120,
+      mousedown = false,
+      cw = window.innerWidth,
+      ch = window.innerHeight;
+
+    // set canvas dimensions
+    canvasFire.width = cw;
+    canvasFire.height = ch;
+
+    // calculate the distance between two points
+    function calculateDistance(p1x, p1y, p2x, p2y) {
+      var xDistance = p1x - p2x,
+        yDistance = p1y - p2y;
+      return Math.sqrt(Math.pow(xDistance, 2) + Math.pow(yDistance, 2));
+    }
+
+    function Firework(sx, sy, tx, ty) {
+      // actual coordinates
+      this.x = sx;
+      this.y = sy;
+      // starting coordinates
+      this.sx = sx;
+      this.sy = sy;
+      // target coordinates
+      this.tx = tx;
+      this.ty = ty;
+      // distance from starting point to target
+      this.distanceToTarget = calculateDistance(sx, sy, tx, ty);
+      this.distanceTraveled = 0;
+      // track the past coordinates of each firework to create a trail effect, increase the coordinate count to create more prominent trails
+      this.coordinates = [];
+      this.coordinateCount = 3;
+      // populate initial coordinate collection with the current coordinates
+      while (this.coordinateCount--) {
+        this.coordinates.push([this.x, this.y]);
+      }
+      this.angle = Math.atan2(ty - sy, tx - sx);
+      this.speed = 2;
+      this.acceleration = 1.05;
+      this.brightness = random(50, 70);
+      // circle target indicator radius
+      this.targetRadius = 1;
+    }
+
+    // update firework
+    Firework.prototype.update = function (index) {
+      // remove last item in coordinates array
+      this.coordinates.pop();
+      // add current coordinates to the start of the array
+      this.coordinates.unshift([this.x, this.y]);
+
+      // cycle the circle target indicator radius
+      if (this.targetRadius < 8) {
+        this.targetRadius += 0.3;
+      } else {
+        this.targetRadius = 1;
+      }
+
+      // speed up the firework
+      this.speed *= this.acceleration;
+
+      // get the current velocities based on angle and speed
+      var vx = Math.cos(this.angle) * this.speed,
+        vy = Math.sin(this.angle) * this.speed;
+      // how far will the firework have traveled with velocities applied?
+      this.distanceTraveled = calculateDistance(this.sx, this.sy, this.x + vx, this.y + vy);
+
+      // if the distance traveled, including velocities, is greater than the initial distance to the target, then the target has been reached
+      if (this.distanceTraveled >= this.distanceToTarget) {
+        createParticles(this.tx, this.ty);
+        // remove the firework, use the index passed into the update function to determine which to remove
+        fireworks.splice(index, 1);
+      } else {
+        // target not reached, keep traveling
+        this.x += vx;
+        this.y += vy;
+      }
+    }
+
+    // draw firework
+    Firework.prototype.draw = function () {
+      ctxFire.beginPath();
+      // move to the last tracked coordinate in the set, then draw a line to the current x and y
+      ctxFire.moveTo(this.coordinates[this.coordinates.length - 1][0], this.coordinates[this.coordinates.length - 1][1]);
+      ctxFire.lineTo(this.x, this.y);
+      ctxFire.strokeStyle = 'hsl(' + hue + ', 100%, ' + this.brightness + '%)';
+      ctxFire.stroke();
+
+      ctxFire.beginPath();
+      // draw the target for this firework with a pulsing circle
+      ctxFire.arc(this.tx, this.ty, this.targetRadius, 0, Math.PI * 2);
+      ctxFire.stroke();
+    }
+
+    // create particle
+    function Particle(x, y) {
+      this.x = x;
+      this.y = y;
+      // track the past coordinates of each particle to create a trail effect, increase the coordinate count to create more prominent trails
+      this.coordinates = [];
+      this.coordinateCount = 5;
+      while (this.coordinateCount--) {
+        this.coordinates.push([this.x, this.y]);
+      }
+      // set a random angle in all possible directions, in radians
+      this.angle = random(0, Math.PI * 2);
+      this.speed = random(1, 10);
+      // friction will slow the particle down
+      this.friction = 0.95;
+      // gravity will be applied and pull the particle down
+      this.gravity = 1;
+      // set the hue to a random number +-50 of the overall hue variable
+      this.hue = random(hue - 50, hue + 50);
+      this.brightness = random(50, 80);
+      this.alpha = 1;
+      // set how fast the particle fades out
+      this.decay = random(0.015, 0.03);
+    }
+
+    // update particle
+    Particle.prototype.update = function (index) {
+      // remove last item in coordinates array
+      this.coordinates.pop();
+      // add current coordinates to the start of the array
+      this.coordinates.unshift([this.x, this.y]);
+      // slow down the particle
+      this.speed *= this.friction;
+      // apply velocity
+      this.x += Math.cos(this.angle) * this.speed;
+      this.y += Math.sin(this.angle) * this.speed + this.gravity;
+      // fade out the particle
+      this.alpha -= this.decay;
+
+      // remove the particle once the alpha is low enough, based on the passed in index
+      if (this.alpha <= this.decay) {
+        particles.splice(index, 1);
+      }
+    }
+
+    // draw particle
+    Particle.prototype.draw = function () {
+      ctxFire.beginPath();
+      // move to the last tracked coordinates in the set, then draw a line to the current x and y
+      ctxFire.moveTo(this.coordinates[this.coordinates.length - 1][0], this.coordinates[this.coordinates.length - 1][1]);
+      ctxFire.lineTo(this.x, this.y);
+      ctxFire.strokeStyle = 'hsla(' + this.hue + ', 100%, ' + this.brightness + '%, ' + this.alpha + ')';
+      ctxFire.stroke();
+    }
+
+    // create particle group/explosion
+    function createParticles(x, y) {
+      // increase the particle count for a bigger explosion, beware of the canvas performance hit with the increased particles though
+      var particleCount = 30;
+      while (particleCount--) {
+        particles.push(new Particle(x, y));
+      }
+    }
+
+    function loop() {
+      // this function will run endlessly with requestAnimationFrame
+      requestAnimFrame(loop);
+
+      // increase the hue to get different colored fireworks over time
+      //hue += 0.5;
+
+      // create random color
+      hue = random(0, 360);
+
+      // normally, clearRect() would be used to clear the canvas
+      // we want to create a trailing effect though
+      // setting the composite operation to destination-out will allow us to clear the canvas at a specific opacity, rather than wiping it entirely
+      ctxFire.globalCompositeOperation = 'destination-out';
+      ctxNodes.globalCompositeOperation = 'destination-out';
+      //ctxNodes.globalCompositeOperation = 'destination-out';
+      // decrease the alpha property to create more prominent trails
+      //ctxFire.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctxFire.fillRect(0, 0, cw, ch);
+      ctxNodes.fillRect(0, 0, cw, ch);
+      // change the composite operation back to our main mode
+      // lighter creates bright highlight points as the fireworks and particles overlap each other
+      ctxFire.globalCompositeOperation = 'lighter';
+      ctxNodes.globalCompositeOperation = 'lighter';
+
+      // loop over each firework, draw it, update it
+      var i = fireworks.length;
+      while (i--) {
+        fireworks[i].draw();
+        fireworks[i].update(i);
+      }
+
+      // loop over each particle, draw it, update it
+      var i = particles.length;
+      while (i-- && i > 0) {
+        particles[i].draw();
+        particles[i].update(i);
+      }
+
+      for (var i = 0; i < grid.length; i++) {
+        grid[i].update(i);
+      }
+
+      // limit the rate at which fireworks get launched when mouse is down
+      if (limiterTick >= limiterTotal) {
+        if (mousedown) {
+          // start the firework at the bottom middle of the screen, then set the current mouse coordinates as the target
+          //  fireworks.push( new Firework( cw / 2, ch, 100, 100 ) );
+          limiterTick = 0;
+        }
+      } else {
+        limiterTick++;
+      }
+    }
+
+  </script>
+  <script>
+
+    var SCREEN_WIDTH = window.innerWidth;
+    var SCREEN_HEIGHT = window.innerHeight;
+
+    var RADIUS = 70;
+
+    var RADIUS_SCALE = 1;
+    var RADIUS_SCALE_MIN = 1;
+    var RADIUS_SCALE_MAX = 1.5;
+
+    var QUANTITY = 1;
+    //    var particles = [];
+
+    var canvas = document.querySelector('#map');
+    var canvasNodes = document.querySelector('#nodes');
+    // canvas.attr('width', SCREEN_WIDTH)
+    //        .attr('height', SCREEN_HEIGHT);
+
+    var width = canvas.offsetWidth;
+    var height = canvas.offsetHeight;
+
+    var ctx = canvas.getContext('2d'),
+      ctxNodes = canvasNodes.getContext('2d');
+
+    var projection = d3.geoMercator()
+      //.scale(width / 1.3 / Math.PI)
+      .translate([width / 2.2, height / 1.6]);
+
+    const pathGenerator = d3.geoPath(projection, ctx);
+
+
+    var grid = [];
+    function Rectangle(ctx, x, y, w, h, color, speed) {
+      this.ctx = ctx;
+      this.x = x;
+      this.y = y;
+      this.height = h;
+      this.width = w;
+      this.color = color;
+
+      this.alpha = 0;                        // current alpha for this instance
+      this.speed = speed;                    // increment for alpha per frame
+      this.triggered = false;                // is running
+      this.done = false;                     // has finished
+    }
+
+    Rectangle.prototype = {
+
+      trigger: function () {                  // start this rectangle
+        this.triggered = true
+      },
+
+      update: function (index) {
+        if (!this.done) {  // only if active
+          this.alpha += this.speed;          // update alpha
+          this.done = (this.alpha >= 1);     // update status
+        }
+
+        this.ctx.fillStyle = this.color;           // render this instance
+        this.ctx.alpha = Math.min(1, this.alpha);  // clamp value
+        this.ctx.fillRect(this.x, this.y, this.width, this.height);
+
+        if (this.done) {
+          grid.splice(index, 1);
+        }
+      }
+    };
+
+    const getProjectionXY = (long, lat) => {
+      const tempProjection = projection([long, lat]);
+      return {
+        x: tempProjection[0],
+        y: tempProjection[1]
+      }
+    };
+
+    const loadData = () => {
+      d3.csv('data.csv',
+        (data) => {
+
+          setInterval(() => {
+            let dst = Math.floor((Math.random() * data.length));
+            let src = Math.floor((Math.random() * data.length));
+
+            if ((dst == src)) {
+              dst = src + 1;
+              if (dst > data.length - 1) { dst = src - 1 }
+            }
+
+            var srclat = data[src].lat;
+            var srclong = data[src].long;
+            var dstlat = data[dst].lat;
+            var dstlong = data[dst].long;
+
+            let link = null;
+            source = [srclong, srclat];
+            target = [dstlong, dstlat];
+            link = { type: "LineString", coordinates: [source, target] };
+
+            const srcAxis = getProjectionXY(srclong, srclat);
+            const destAxis = getProjectionXY(dstlong, dstlat);
+
+            fireworks.push(new Firework(srcAxis.x, srcAxis.y, destAxis.x, destAxis.y));
+
+            ctxNodes.fillStyle = 'rgba(0, 0, 0, 0)';
+
+            grid.push(new Rectangle(ctxNodes,
+              srcAxis.x, srcAxis.y, 8, 8, "red", 0.02));
+
+          }, 50);
+        });
+
+    };
+
+
+    const loadMap = () => {
+      // load and display the World
+      d3.json("https://raw.githubusercontent.com/holtzy/D3-graph-gallery/master/DATA/world.geojson", function (error, topology) {
+        ctx.beginPath();
+
+        // Got the positions of the path
+        pathGenerator(topology);
+
+        // Fill the paths
+        ctx.fillStyle = "#111";
+        ctx.fill();
+
+        // Add stroke
+        ctx.strokeStyle = "#699fb3";
+        ctx.stroke()
+        loadData();
+      });
+
+      //createGlows();
+
+    };
+
+    loadMap();
+    window.onload = loop;
+		//setInterval( loop, 1000 / 60 );
+    //loop()
+  </script>
+</body>
