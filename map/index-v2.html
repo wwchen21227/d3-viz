@@ -12,7 +12,7 @@
     }
 
     #map,
-    #firework,
+    #attack,
     #nodes {
       position: absolute;
       left: 0;
@@ -27,7 +27,7 @@
       z-index: 2;
     }
 
-    #firework {
+    #attack {
       z-index: 3;
     }
   </style>
@@ -37,7 +37,7 @@
 
   <canvas id="map" width="1280" height="600"></canvas>
   <canvas id="nodes" width="1280" height="600"></canvas>
-  <canvas id="firework" width="1280" height="600"></canvas>
+  <canvas id="attack" width="1280" height="600"></canvas>
 
   <script src="https://d3js.org/d3.v4.js" charset="utf-8"></script>
   <script src="https://unpkg.com/topojson-client@3"></script>
@@ -54,12 +54,12 @@
     function random(min, max) {
       return Math.random() * (max - min) + min;
     }
-    let canvasFire = document.getElementById('firework'),
+    let canvasFire = document.getElementById('attack'),
       ctxFire = canvasFire.getContext('2d'),
       limiterTotal = 5,
       limiterTick = 0,
-      // firework collection
-      fireworks = [],
+      // attacks collection
+      attacks = [],
       // particle collection
       particles = [],
       // starting hue
@@ -79,7 +79,7 @@
       return Math.sqrt(Math.pow(xDistance, 2) + Math.pow(yDistance, 2));
     }
 
-    function Firework(sx, sy, tx, ty) {
+    function Attack(sx, sy, tx, ty) {
       // actual coordinates
       this.x = sx;
       this.y = sy;
@@ -92,7 +92,6 @@
       // distance from starting point to target
       this.distanceToTarget = calculateDistance(sx, sy, tx, ty);
       this.distanceTraveled = 0;
-      // track the past coordinates of each firework to create a trail effect, increase the coordinate count to create more prominent trails
       this.coordinates = [];
       this.coordinateCount = 3;
       // populate initial coordinate collection with the current coordinates
@@ -107,8 +106,8 @@
       this.targetRadius = 1;
     }
 
-    // update firework
-    Firework.prototype.update = function (index) {
+    // update attack
+    Attack.prototype.update = function (index) {
       // remove last item in coordinates array
       this.coordinates.pop();
       // add current coordinates to the start of the array
@@ -121,20 +120,20 @@
         this.targetRadius = 1;
       }
 
-      // speed up the firework
+      // speed up the attack
       this.speed *= this.acceleration;
 
       // get the current velocities based on angle and speed
       var vx = Math.cos(this.angle) * this.speed,
         vy = Math.sin(this.angle) * this.speed;
-      // how far will the firework have traveled with velocities applied?
+      // how far will the attack have traveled with velocities applied?
       this.distanceTraveled = calculateDistance(this.sx, this.sy, this.x + vx, this.y + vy);
 
       // if the distance traveled, including velocities, is greater than the initial distance to the target, then the target has been reached
       if (this.distanceTraveled >= this.distanceToTarget) {
         createParticles(this.tx, this.ty);
-        // remove the firework, use the index passed into the update function to determine which to remove
-        fireworks.splice(index, 1);
+        // remove the attack, use the index passed into the update function to determine which to remove
+        attacks.splice(index, 1);
       } else {
         // target not reached, keep traveling
         this.x += vx;
@@ -142,8 +141,8 @@
       }
     }
 
-    // draw firework
-    Firework.prototype.draw = function () {
+    // draw attack
+    Attack.prototype.draw = function () {
       ctxFire.beginPath();
       // move to the last tracked coordinate in the set, then draw a line to the current x and y
       ctxFire.moveTo(this.coordinates[this.coordinates.length - 1][0], this.coordinates[this.coordinates.length - 1][1]);
@@ -152,7 +151,7 @@
       ctxFire.stroke();
 
       ctxFire.beginPath();
-      // draw the target for this firework with a pulsing circle
+      // draw the target for this attack with a pulsing circle
       ctxFire.arc(this.tx, this.ty, this.targetRadius, 0, Math.PI * 2);
       ctxFire.stroke();
     }
@@ -225,7 +224,7 @@
       // this function will run endlessly with requestAnimationFrame
       requestAnimFrame(loop);
 
-      // increase the hue to get different colored fireworks over time
+      // increase the hue to get different colored attacks over time
       //hue += 0.5;
 
       // create random color
@@ -242,15 +241,15 @@
       ctxFire.fillRect(0, 0, cw, ch);
       ctxNodes.fillRect(0, 0, cw, ch);
       // change the composite operation back to our main mode
-      // lighter creates bright highlight points as the fireworks and particles overlap each other
+      // lighter creates bright highlight points as the attacks and particles overlap each other
       ctxFire.globalCompositeOperation = 'lighter';
       ctxNodes.globalCompositeOperation = 'lighter';
 
-      // loop over each firework, draw it, update it
-      var i = fireworks.length;
+      // loop over each attack, draw it, update it
+      var i = attacks.length;
       while (i--) {
-        fireworks[i].draw();
-        fireworks[i].update(i);
+        attacks[i].draw();
+        attacks[i].update(i);
       }
 
       // loop over each particle, draw it, update it
@@ -262,17 +261,6 @@
 
       for (var i = 0; i < grid.length; i++) {
         grid[i].update(i);
-      }
-
-      // limit the rate at which fireworks get launched when mouse is down
-      if (limiterTick >= limiterTotal) {
-        if (mousedown) {
-          // start the firework at the bottom middle of the screen, then set the current mouse coordinates as the target
-          //  fireworks.push( new Firework( cw / 2, ch, 100, 100 ) );
-          limiterTick = 0;
-        }
-      } else {
-        limiterTick++;
       }
     }
 
@@ -303,8 +291,8 @@
       ctxNodes = canvasNodes.getContext('2d');
 
     var projection = d3.geoMercator()
-      //.scale(width / 1.3 / Math.PI)
-      .translate([width / 2.2, height / 1.6]);
+      .scale([width/(2*Math.PI)])
+      .translate([width / 2, height / 1.6]);
 
     const pathGenerator = d3.geoPath(projection, ctx);
 
@@ -372,15 +360,10 @@
             var dstlat = data[dst].lat;
             var dstlong = data[dst].long;
 
-            let link = null;
-            source = [srclong, srclat];
-            target = [dstlong, dstlat];
-            link = { type: "LineString", coordinates: [source, target] };
-
             const srcAxis = getProjectionXY(srclong, srclat);
             const destAxis = getProjectionXY(dstlong, dstlat);
 
-            fireworks.push(new Firework(srcAxis.x, srcAxis.y, destAxis.x, destAxis.y));
+            attacks.push(new Attack(srcAxis.x, srcAxis.y, destAxis.x, destAxis.y));
 
             ctxNodes.fillStyle = 'rgba(0, 0, 0, 0)';
 
@@ -391,7 +374,6 @@
         });
 
     };
-
 
     const loadMap = () => {
       // load and display the World
@@ -407,17 +389,15 @@
 
         // Add stroke
         ctx.strokeStyle = "#699fb3";
-        ctx.stroke()
+        ctx.stroke();
+
         loadData();
       });
 
-      //createGlows();
-
+      window.onload = loop;
     };
 
     loadMap();
-    window.onload = loop;
-		//setInterval( loop, 1000 / 60 );
-    //loop()
+
   </script>
 </body>
